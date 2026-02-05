@@ -1,0 +1,211 @@
+name: Build and Deploy OpenClaw
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'openclaw/**'
+      - 'Dockerfile'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: openclaw-production
+
+jobs:
+  build-and-push:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/openclaw-production-github-ecr
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Docker
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-butler:
+    name: Deploy Butler Agent
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/openclaw-production-github-ecr
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Deploy
+
+      - name: Update Butler task definition
+        run: |
+          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition openclaw-production-butler --query taskDefinition)
+          echo $TASK_DEFINITION | jq '.containerDefinitions[0].image = "${{ needs.build-and-push.outputs.image-tag }}"' > new-task-def.json
+          
+          aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --family openclaw-production-butler
+
+      - name: Deploy Butler service (if exists)
+        run: |
+          # Check if service exists
+          if aws ecs describe-services --cluster openclaw-production --services openclaw-butler --query 'services[0].status' | grep -q "ACTIVE"; then
+            aws ecs update-service \
+              --cluster openclaw-production \
+              --service openclaw-butler \
+              --task-definition openclaw-production-butler \
+              --force-new-deployment
+            
+            echo "Butler service updated successfully"
+          else
+            echo "Butler service doesn't exist yet - will be created manually or via Terraform"
+          fi
+
+  deploy-scout:
+    name: Deploy Scout Agent
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/openclaw-production-github-ecr
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Deploy
+
+      - name: Update Scout task definition
+        run: |
+          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition openclaw-production-scout --query taskDefinition)
+          echo $TASK_DEFINITION | jq '.containerDefinitions[0].image = "${{ needs.build-and-push.outputs.image-tag }}"' > new-task-def.json
+          
+          aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --family openclaw-production-scout
+
+      - name: Deploy Scout service (if exists)
+        run: |
+          if aws ecs describe-services --cluster openclaw-production --services openclaw-scout --query 'services[0].status' | grep -q "ACTIVE"; then
+            aws ecs update-service \
+              --cluster openclaw-production \
+              --service openclaw-scout \
+              --task-definition openclaw-production-scout \
+              --force-new-deployment
+            
+            echo "Scout service updated successfully"
+          else
+            echo "Scout service doesn't exist yet - will be created manually or via Terraform"
+          fi
+
+  deploy-writer:
+    name: Deploy Writer Agent
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/openclaw-production-github-ecr
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Deploy
+
+      - name: Update Writer task definition
+        run: |
+          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition openclaw-production-writer --query taskDefinition)
+          echo $TASK_DEFINITION | jq '.containerDefinitions[0].image = "${{ needs.build-and-push.outputs.image-tag }}"' > new-task-def.json
+          
+          aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --family openclaw-production-writer
+
+      - name: Deploy Writer service (if exists)
+        run: |
+          if aws ecs describe-services --cluster openclaw-production --services openclaw-writer --query 'services[0].status' | grep -q "ACTIVE"; then
+            aws ecs update-service \
+              --cluster openclaw-production \
+              --service openclaw-writer \
+              --task-definition openclaw-production-writer \
+              --force-new-deployment
+            
+            echo "Writer service updated successfully"
+          else
+            echo "Writer service doesn't exist yet - will be created manually or via Terraform"
+          fi
+
+  notify:
+    name: Notify Deployment Status
+    needs: [deploy-butler, deploy-scout, deploy-writer]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Butler**: ${{ needs.deploy-butler.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scout**: ${{ needs.deploy-scout.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Writer**: ${{ needs.deploy-writer.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Digest**: ${{ needs.build-and-push.outputs.image-digest }}" >> $GITHUB_STEP_SUMMARY
