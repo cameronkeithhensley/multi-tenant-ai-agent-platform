@@ -47,6 +47,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "agent_data" {
   rule {
     id     = "archive-old-data"
     status = "Enabled"
+    filter {}
 
     # Move to Intelligent-Tiering after 30 days
     transition {
@@ -69,104 +70,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "agent_data" {
   rule {
     id     = "delete-old-versions"
     status = "Enabled"
+    filter {}
 
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
-  }
-}
-
-# Bucket policy for tenant isolation
-# This ensures agents can only access their own tenant prefix
-resource "aws_s3_bucket_policy" "agent_data" {
-  bucket = aws_s3_bucket.agent_data.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "EnforceTenantIsolation"
-        Effect = "Allow"
-        Principal = {
-          AWS = "*"
-        }
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "${aws_s3_bucket.agent_data.arn}/*",
-          aws_s3_bucket.agent_data.arn
-        ]
-        Condition = {
-          StringLike = {
-            "s3:prefix" = ["$${aws:userid}/*"]
-          }
-        }
-      }
-    ]
-  })
-}
-
-# S3 Bucket for Terraform State (if not created manually)
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = "${var.project_name}-terraform-state"
-
-  tags = {
-    Name = "${var.project_name}-terraform-state"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# DynamoDB table for Terraform state locking
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "${var.project_name}-terraform-locks"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name = "${var.project_name}-terraform-locks"
-  }
-
-  lifecycle {
-    prevent_destroy = true
   }
 }
 
@@ -195,6 +103,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
   rule {
     id     = "archive-logs"
     status = "Enabled"
+    filter {}
 
     transition {
       days          = 90
@@ -230,14 +139,4 @@ output "agent_data_bucket_arn" {
 output "logs_bucket_name" {
   description = "Name of the logs S3 bucket"
   value       = aws_s3_bucket.logs.id
-}
-
-output "terraform_state_bucket_name" {
-  description = "Name of the Terraform state S3 bucket"
-  value       = aws_s3_bucket.terraform_state.id
-}
-
-output "terraform_locks_table_name" {
-  description = "Name of the Terraform locks DynamoDB table"
-  value       = aws_dynamodb_table.terraform_locks.id
 }
