@@ -66,6 +66,18 @@ module "database" {
   db_username        = var.db_username
 }
 
+# Bastion Host for Database Access
+module "bastion" {
+  source = "./modules/bastion"
+
+  project_name           = "openclaw"
+  environment            = "production"
+  vpc_id                 = module.networking.vpc_id
+  public_subnet_ids      = module.networking.public_subnet_ids
+  rds_security_group_id  = module.database.db_security_group_id
+  instance_type          = "t3.micro"
+}
+
 module "storage" {
   source = "./modules/storage"
   
@@ -112,4 +124,15 @@ output "agent_data_bucket" {
 output "ecr_repository_url" {
   description = "ECR repository URL for OpenClaw images"
   value       = module.compute.ecr_repository_url
+}
+
+# Bastion outputs
+output "bastion_public_ip" {
+  description = "Public IP of bastion host"
+  value       = module.bastion.bastion_public_ip
+}
+
+output "bastion_ssh_command" {
+  description = "SSH command to connect"
+  value       = module.bastion.bastion_ssh_command
 }
