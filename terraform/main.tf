@@ -2,6 +2,8 @@
 # Provider: AWS (us-east-1)
 # Architecture: ECS Fargate + RDS PostgreSQL + S3
 
+data "aws_caller_identity" "current" {}
+
 terraform {
   required_version = ">= 1.6.0"
   
@@ -96,6 +98,12 @@ module "compute" {
   db_endpoint        = module.database.db_endpoint
   db_secret_arn      = module.database.db_secret_arn
   agent_data_bucket  = module.storage.agent_data_bucket_name
+  ecr_repository_url       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${local.project_name}-${var.environment}"
+  db_host                  = module.database.db_endpoint
+  db_name                  = module.database.db_name
+  db_username              = module.database.db_username
+  db_password_secret_arn   = module.database.db_password_secret_arn
+  aws_region               = var.aws_region
 }
 
 module "security" {

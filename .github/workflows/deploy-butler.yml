@@ -1,0 +1,71 @@
+name: Deploy Butler to ECS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'agents/butler/**'
+      - 'agents/shared/**'
+      - '.github/workflows/deploy-butler.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: openclaw-production
+  ECS_CLUSTER: openclaw-production
+  ECS_SERVICE: openclaw-production-butler
+  CONTAINER_NAME: butler
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and Deploy Butler
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::207128437758:role/openclaw-production-github-ecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f agents/butler/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --force-new-deployment
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+
+      - name: Deployment successful
+        run: |
+          echo "✅ Butler deployed successfully to ECS!"
+          echo "Image: ${{ steps.build-image.outputs.image }}"

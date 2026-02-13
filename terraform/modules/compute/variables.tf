@@ -37,3 +37,34 @@ variable "agent_data_bucket" {
   description = "Name of the S3 bucket for agent data"
   type        = string
 }
+
+variable "ecr_repository_url" {
+  description = "URL of the ECR repository"
+  type        = string
+}
+
+variable "db_host" {
+  description = "Database host endpoint"
+  type        = string
+}
+
+variable "db_name" {
+  description = "Database name"
+  type        = string
+}
+
+variable "db_username" {
+  description = "Database username"
+  type        = string
+}
+
+variable "db_password_secret_arn" {
+  description = "ARN of the secret containing the database password"
+  type        = string
+}
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}

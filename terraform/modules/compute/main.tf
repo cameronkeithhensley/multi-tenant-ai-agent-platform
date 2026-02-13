@@ -180,6 +180,53 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   })
 }
 
+# ECS Task Execution Role (for pulling images, reading secrets)
+resource "aws_iam_role" "ecs_execution" {
+  name = "${var.project_name}-${var.environment}-ecs-execution"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-ecs-execution-role"
+  }
+}
+
+# Attach AWS managed policy for ECS task execution
+resource "aws_iam_role_policy_attachment" "ecs_execution_policy" {
+  role       = aws_iam_role.ecs_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Policy for reading database password from Secrets Manager
+resource "aws_iam_role_policy" "ecs_secrets" {
+  name = "${var.project_name}-${var.environment}-ecs-secrets"
+  role = aws_iam_role.ecs_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = var.db_password_secret_arn
+      }
+    ]
+  })
+}
+
 # IAM Role for ECS Tasks (used by containers at runtime)
 resource "aws_iam_role" "ecs_task" {
   name = "${var.project_name}-${var.environment}-ecs-task"
