@@ -98,7 +98,7 @@ Be concise, professional, and proactive."""
 def main():
     """Main entry point for Butler agent."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Butler Personal Assistant Agent')
     parser.add_argument(
         '--health-check',
@@ -110,16 +110,18 @@ def main():
         default='customer-001',
         help='Tenant identifier (default: customer-001)'
     )
-    
+
     args = parser.parse_args()
-    
+
     butler = ButlerAgent(tenant_id=args.tenant_id)
-    
+
     if args.health_check:
         success = butler.run_health_check()
         sys.exit(0 if success else 1)
     else:
-        butler.interactive_mode()
-
-if __name__ == "__main__":
-    main()
+        # CHANGE THIS PART:
+        import time
+        print("🤵 Butler Agent - Running in production mode")
+        print("Waiting for API requests...")
+        while True:
+            time.sleep(60)  # Sleep for 60 seconds, stay alive
